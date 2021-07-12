@@ -19,6 +19,7 @@ import datetime
 import os
 import time
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -111,6 +112,7 @@ BASE_SCRIPTS = [
     'wallet_listtransactions.py --legacy-wallet',
     'wallet_listtransactions.py --descriptors',
     'feature_taproot.py',
+    'rpc_signer.py',
     'wallet_signer.py --descriptors',
     # vv Tests less than 60s vv
     'p2p_sendheaders.py',
@@ -137,6 +139,7 @@ BASE_SCRIPTS = [
     'interface_zmq.py',
     'rpc_invalid_address_message.py',
     'interface_bitcoin_cli.py',
+    'feature_bind_extra.py',
     'mempool_resurrect.py',
     'wallet_txn_doublespend.py --mineblock',
     'tool_wallet.py --legacy-wallet',
@@ -172,6 +175,7 @@ BASE_SCRIPTS = [
     'wallet_groups.py --legacy-wallet',
     'p2p_addrv2_relay.py',
     'wallet_groups.py --descriptors',
+    'p2p_compactblocks_hb.py',
     'p2p_disconnect_ban.py',
     'rpc_decodescript.py',
     'rpc_blockchain.py',
@@ -210,6 +214,7 @@ BASE_SCRIPTS = [
     'mempool_package_onemore.py',
     'rpc_createmultisig.py --legacy-wallet',
     'rpc_createmultisig.py --descriptors',
+    'rpc_packages.py',
     'feature_versionbits_warning.py',
     'rpc_preciousblock.py',
     'wallet_importprunedfunds.py --legacy-wallet',
@@ -259,6 +264,7 @@ BASE_SCRIPTS = [
     'wallet_send.py --legacy-wallet',
     'wallet_send.py --descriptors',
     'wallet_create_tx.py --descriptors',
+    'wallet_taproot.py',
     'p2p_fingerprint.py',
     'feature_uacomment.py',
     'wallet_coinbase_category.py --legacy-wallet',
@@ -274,12 +280,15 @@ BASE_SCRIPTS = [
     'feature_asmap.py',
     'mempool_unbroadcast.py',
     'mempool_compatibility.py',
+    'mempool_accept_wtxid.py',
     'rpc_deriveaddresses.py',
     'rpc_deriveaddresses.py --usecli',
     'p2p_ping.py',
     'rpc_scantxoutset.py',
     'feature_logging.py',
     'feature_anchors.py',
+    'feature_coinstatsindex.py',
+    'wallet_orphanedreward.py',
     'p2p_node_network_limited.py',
     'p2p_permissions.py',
     'feature_blocksdir.py',
@@ -543,9 +552,11 @@ def run_tests(*, test_list, src_dir, build_dir, tmpdir, jobs=1, enable_coverage=
 
     all_passed = all(map(lambda test_result: test_result.was_successful, test_results)) and coverage_passed
 
-    # This will be a no-op unless failfast is True in which case there may be dangling
-    # processes which need to be killed.
-    job_queue.kill_and_join()
+    # Clean up dangling processes if any. This may only happen with --failfast option.
+    # Killing the process group will also terminate the current process but that is
+    # not an issue
+    if len(job_queue.jobs):
+        os.killpg(os.getpgid(0), signal.SIGKILL)
 
     sys.exit(not all_passed)
 
@@ -641,16 +652,6 @@ class TestHandler:
             if self.use_term_control:
                 print('.', end='', flush=True)
             dot_count += 1
-
-    def kill_and_join(self):
-        """Send SIGKILL to all jobs and block until all have ended."""
-        procs = [i[2] for i in self.jobs]
-
-        for proc in procs:
-            proc.kill()
-
-        for proc in procs:
-            proc.wait()
 
 
 class TestResult():

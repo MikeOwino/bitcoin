@@ -33,7 +33,7 @@ class FeatureBlockfilterindexPruneTest(BitcoinTestFramework):
 
         self.log.info("prune some blocks")
         pruneheight = self.nodes[0].pruneblockchain(400)
-        assert_equal(pruneheight, 250)
+        assert_equal(pruneheight, 248)
 
         self.log.info("check if we can access the tips blockfilter when we have pruned some blocks")
         assert_greater_than(len(self.nodes[0].getblockfilter(self.nodes[0].getbestblockhash())['filter']), 0)
@@ -54,11 +54,13 @@ class FeatureBlockfilterindexPruneTest(BitcoinTestFramework):
         self.stop_node(0)
 
         self.log.info("make sure we get an init error when starting the node again with block filters")
-        with self.nodes[0].assert_debug_log(["basic block filter index best block of the index goes beyond pruned data. Please disable the index or reindex (which will download the whole blockchain again)"]):
-            self.nodes[0].assert_start_raises_init_error(extra_args=["-fastprune", "-prune=1", "-blockfilterindex=1"])
+        self.nodes[0].assert_start_raises_init_error(
+            extra_args=["-fastprune", "-prune=1", "-blockfilterindex=1"],
+            expected_msg="Error: basic block filter index best block of the index goes beyond pruned data. Please disable the index or reindex (which will download the whole blockchain again)",
+        )
 
         self.log.info("make sure the node starts again with the -reindex arg")
-        self.start_node(0, extra_args = ["-fastprune", "-prune=1", "-blockfilterindex", "-reindex"])
+        self.start_node(0, extra_args=["-fastprune", "-prune=1", "-blockfilterindex", "-reindex"])
 
 
 if __name__ == '__main__':

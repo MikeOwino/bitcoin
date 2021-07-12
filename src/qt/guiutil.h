@@ -9,19 +9,25 @@
 #include <fs.h>
 #include <net.h>
 #include <netaddress.h>
+#include <util/check.h>
 
+#include <QApplication>
 #include <QEvent>
 #include <QHeaderView>
 #include <QItemDelegate>
 #include <QLabel>
 #include <QMessageBox>
+#include <QMetaObject>
 #include <QObject>
 #include <QProgressBar>
 #include <QString>
 #include <QTableView>
 
+#include <cassert>
 #include <chrono>
+#include <utility>
 
+class PlatformStyle;
 class QValidatedLineEdit;
 class SendCoinsRecipient;
 
@@ -31,10 +37,12 @@ namespace interfaces
 }
 
 QT_BEGIN_NAMESPACE
+class QAbstractButton;
 class QAbstractItemView;
 class QAction;
 class QDateTime;
 class QFont;
+class QKeySequence;
 class QLineEdit;
 class QMenu;
 class QPoint;
@@ -59,6 +67,14 @@ namespace GUIUtil
 
     // Set up widget for address
     void setupAddressWidget(QValidatedLineEdit *widget, QWidget *parent);
+
+    /**
+     * Connects an additional shortcut to a QAbstractButton. Works around the
+     * one shortcut limitation of the button's shortcut property.
+     * @param[in] button    QAbstractButton to assign shortcut to
+     * @param[in] shortcut  QKeySequence to use as shortcut
+     */
+    void AddButtonShortcut(QAbstractButton* button, const QKeySequence& shortcut);
 
     // Parse "bitcoin:" URI into recipient object, return true on successful parsing
     bool parseBitcoinURI(const QUrl &uri, SendCoinsRecipient *out);
@@ -216,9 +232,31 @@ namespace GUIUtil
 
     qreal calculateIdealFontSize(int width, const QString& text, QFont font, qreal minPointSize = 4, qreal startPointSize = 14);
 
-    class ClickableLabel : public QLabel
+    class ThemedLabel : public QLabel
     {
         Q_OBJECT
+
+    public:
+        explicit ThemedLabel(const PlatformStyle* platform_style, QWidget* parent = nullptr);
+        void setThemedPixmap(const QString& image_filename, int width, int height);
+
+    protected:
+        void changeEvent(QEvent* e) override;
+
+    private:
+        const PlatformStyle* m_platform_style;
+        QString m_image_filename;
+        int m_pixmap_width;
+        int m_pixmap_height;
+        void updateThemedPixmap();
+    };
+
+    class ClickableLabel : public ThemedLabel
+    {
+        Q_OBJECT
+
+    public:
+        explicit ClickableLabel(const PlatformStyle* platform_style, QWidget* parent = nullptr);
 
     Q_SIGNALS:
         /** Emitted when the label is clicked. The relative mouse coordinates of the click are
@@ -325,6 +363,58 @@ namespace GUIUtil
     {
         QObject source;
         QObject::connect(&source, &QObject::destroyed, object, std::forward<Fn>(function), connection);
+    }
+
+    /**
+     * Replaces a plain text link with an HTML tagged one.
+     */
+    QString MakeHtmlLink(const QString& source, const QString& link);
+
+    void PrintSlotException(
+        const std::exception* exception,
+        const QObject* sender,
+        const QObject* receiver);
+
+    /**
+     * A drop-in replacement of QObject::connect function
+     * (see: https://doc.qt.io/qt-5/qobject.html#connect-3), that
+     * guaranties that all exceptions are handled within the slot.
+     *
+     * NOTE: This function is incompatible with Qt private signals.
+     */
+    template <typename Sender, typename Signal, typename Receiver, typename Slot>
+    auto ExceptionSafeConnect(
+        Sender sender, Signal signal, Receiver receiver, Slot method,
+        Qt::ConnectionType type = Qt::AutoConnection)
+    {
+        return QObject::connect(
+            sender, signal, receiver,
+            [sender, receiver, method](auto&&... args) {
+                bool ok{true};
+                try {
+                    (receiver->*method)(std::forward<decltype(args)>(args)...);
+                } catch (const NonFatalCheckError& e) {
+                    PrintSlotException(&e, sender, receiver);
+                    ok = QMetaObject::invokeMethod(
+                        qApp, "handleNonFatalException",
+                        blockingGUIThreadConnection(),
+                        Q_ARG(QString, QString::fromStdString(e.what())));
+                } catch (const std::exception& e) {
+                    PrintSlotException(&e, sender, receiver);
+                    ok = QMetaObject::invokeMethod(
+                        qApp, "handleRunawayException",
+                        blockingGUIThreadConnection(),
+                        Q_ARG(QString, QString::fromStdString(e.what())));
+                } catch (...) {
+                    PrintSlotException(nullptr, sender, receiver);
+                    ok = QMetaObject::invokeMethod(
+                        qApp, "handleRunawayException",
+                        blockingGUIThreadConnection(),
+                        Q_ARG(QString, "Unknown failure occurred."));
+                }
+                assert(ok);
+            },
+            type);
     }
 
 } // namespace GUIUtil

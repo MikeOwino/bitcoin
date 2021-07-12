@@ -22,7 +22,6 @@
 #include <wallet/fees.h>
 #include <wallet/ismine.h>
 #include <wallet/load.h>
-#include <wallet/rpcsigner.h>
 #include <wallet/rpcwallet.h>
 #include <wallet/wallet.h>
 
@@ -198,22 +197,19 @@ public:
         }
         return result;
     }
-    bool addDestData(const CTxDestination& dest, const std::string& key, const std::string& value) override
-    {
+    std::vector<std::string> getAddressReceiveRequests() override {
+        LOCK(m_wallet->cs_wallet);
+        return m_wallet->GetAddressReceiveRequests();
+    }
+    bool setAddressReceiveRequest(const CTxDestination& dest, const std::string& id, const std::string& value) override {
         LOCK(m_wallet->cs_wallet);
         WalletBatch batch{m_wallet->GetDatabase()};
-        return m_wallet->AddDestData(batch, dest, key, value);
+        return m_wallet->SetAddressReceiveRequest(batch, dest, id, value);
     }
-    bool eraseDestData(const CTxDestination& dest, const std::string& key) override
+    bool displayAddress(const CTxDestination& dest) override
     {
         LOCK(m_wallet->cs_wallet);
-        WalletBatch batch{m_wallet->GetDatabase()};
-        return m_wallet->EraseDestData(batch, dest, key);
-    }
-    std::vector<std::string> getDestValues(const std::string& prefix) override
-    {
-        LOCK(m_wallet->cs_wallet);
-        return m_wallet->GetDestValues(prefix);
+        return m_wallet->DisplayAddress(dest);
     }
     void lockCoin(const COutPoint& output) override
     {
@@ -353,9 +349,9 @@ public:
     TransactionError fillPSBT(int sighash_type,
         bool sign,
         bool bip32derivs,
+        size_t* n_signed,
         PartiallySignedTransaction& psbtx,
-        bool& complete,
-        size_t* n_signed) override
+        bool& complete) override
     {
         return m_wallet->FillPSBT(psbtx, complete, sighash_type, sign, bip32derivs, n_signed);
     }
@@ -455,6 +451,7 @@ public:
     unsigned int getConfirmTarget() override { return m_wallet->m_confirm_target; }
     bool hdEnabled() override { return m_wallet->IsHDEnabled(); }
     bool canGetAddresses() override { return m_wallet->CanGetAddresses(); }
+    bool hasExternalSigner() override { return m_wallet->IsWalletFlagSet(WALLET_FLAG_EXTERNAL_SIGNER); }
     bool privateKeysDisabled() override { return m_wallet->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS); }
     OutputType getDefaultAddressType() override { return m_wallet->m_default_address_type; }
     CAmount getDefaultMaxTxFee() override { return m_wallet->m_default_max_tx_fee; }
@@ -478,13 +475,13 @@ public:
     std::unique_ptr<Handler> handleAddressBookChanged(AddressBookChangedFn fn) override
     {
         return MakeHandler(m_wallet->NotifyAddressBookChanged.connect(
-            [fn](CWallet*, const CTxDestination& address, const std::string& label, bool is_mine,
-                const std::string& purpose, ChangeType status) { fn(address, label, is_mine, purpose, status); }));
+            [fn](const CTxDestination& address, const std::string& label, bool is_mine,
+                 const std::string& purpose, ChangeType status) { fn(address, label, is_mine, purpose, status); }));
     }
     std::unique_ptr<Handler> handleTransactionChanged(TransactionChangedFn fn) override
     {
         return MakeHandler(m_wallet->NotifyTransactionChanged.connect(
-            [fn](CWallet*, const uint256& txid, ChangeType status) { fn(txid, status); }));
+            [fn](const uint256& txid, ChangeType status) { fn(txid, status); }));
     }
     std::unique_ptr<Handler> handleWatchOnlyChanged(WatchOnlyChangedFn fn) override
     {
@@ -520,17 +517,6 @@ public:
             }, command.argNames, command.unique_id);
             m_rpc_handlers.emplace_back(m_context.chain->handleRpc(m_rpc_commands.back()));
         }
-
-#ifdef ENABLE_EXTERNAL_SIGNER
-        for (const CRPCCommand& command : GetSignerRPCCommands()) {
-            m_rpc_commands.emplace_back(command.category, command.name, [this, &command](const JSONRPCRequest& request, UniValue& result, bool last_handler) {
-                JSONRPCRequest wallet_request = request;
-                wallet_request.context = &m_context;
-                return command.actor(wallet_request, result, last_handler);
-            }, command.argNames, command.unique_id);
-            m_rpc_handlers.emplace_back(m_context.chain->handleRpc(m_rpc_commands.back()));
-        }
-#endif
     }
     bool verify() override { return VerifyWallets(*m_context.chain); }
     bool load() override { return LoadWallets(*m_context.chain); }

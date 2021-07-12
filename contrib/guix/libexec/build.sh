@@ -33,6 +33,9 @@ Required environment variables as seen inside the container:
     OUTDIR: ${OUTDIR:?not set}
 EOF
 
+ACTUAL_OUTDIR="${OUTDIR}"
+OUTDIR="${DISTSRC}/output"
+
 #####################
 # Environment Setup #
 #####################
@@ -175,8 +178,6 @@ case "$HOST" in
 esac
 
 # Environment variables for determinism
-export QT_RCC_TEST=1
-export QT_RCC_SOURCE_DATE_OVERRIDE=1
 export TAR_OPTIONS="--owner=0 --group=0 --numeric-owner --mtime='@${SOURCE_DATE_EPOCH}' --sort=name"
 export TZ="UTC"
 case "$HOST" in
@@ -213,6 +214,7 @@ make -C depends --jobs="$JOBS" HOST="$HOST" \
                                    x86_64_linux_NM=x86_64-linux-gnu-nm \
                                    x86_64_linux_STRIP=x86_64-linux-gnu-strip \
                                    qt_config_opts_i686_linux='-platform linux-g++ -xplatform bitcoin-linux-g++' \
+                                   qt_config_opts_x86_64_linux='-platform linux-g++ -xplatform bitcoin-linux-g++' \
                                    FORCE_USE_SYSTEM_CLANG=1
 
 
@@ -225,8 +227,11 @@ GIT_ARCHIVE="${DIST_ARCHIVE_BASE}/${DISTNAME}.tar.gz"
 # Create the source tarball if not already there
 if [ ! -e "$GIT_ARCHIVE" ]; then
     mkdir -p "$(dirname "$GIT_ARCHIVE")"
+    touch "${DIST_ARCHIVE_BASE}"/SKIPATTEST.TAG
     git archive --prefix="${DISTNAME}/" --output="$GIT_ARCHIVE" HEAD
 fi
+
+mkdir -p "$OUTDIR"
 
 ###########################
 # Binary Tarball Building #
@@ -235,7 +240,7 @@ fi
 # CONFIGFLAGS
 CONFIGFLAGS="--enable-reduce-exports --disable-bench --disable-gui-tests --disable-fuzz-binary"
 case "$HOST" in
-    *linux*) CONFIGFLAGS+=" --enable-glibc-back-compat" ;;
+    *linux*) CONFIGFLAGS+=" --disable-threadlocal" ;;
 esac
 
 # CFLAGS
@@ -255,8 +260,15 @@ case "$HOST" in
     *mingw*)  HOST_LDFLAGS="-Wl,--no-insert-timestamp" ;;
 esac
 
+# Using --no-tls-get-addr-optimize retains compatibility with glibc 2.17, by
+# avoiding a PowerPC64 optimisation available in glibc 2.22 and later.
+# https://sourceware.org/binutils/docs-2.35/ld/PowerPC64-ELF64.html
 case "$HOST" in
-    powerpc64-linux-*) HOST_LDFLAGS="${HOST_LDFLAGS} -Wl,-z,noexecstack" ;;
+    *powerpc64*) HOST_LDFLAGS="${HOST_LDFLAGS} -Wl,--no-tls-get-addr-optimize" ;;
+esac
+
+case "$HOST" in
+    powerpc64-linux-*|riscv64-linux-*) HOST_LDFLAGS="${HOST_LDFLAGS} -Wl,-z,noexecstack" ;;
 esac
 
 # Make $HOST-specific native binaries from depends available in $PATH
@@ -287,13 +299,15 @@ mkdir -p "$DISTSRC"
     # Build Bitcoin Core
     make --jobs="$JOBS" ${V:+V=1}
 
-    # Perform basic ELF security checks on a series of executables.
+    # Check that symbol/security checks tools are sane.
+    make test-security-check ${V:+V=1}
+    # Perform basic security checks on a series of executables.
     make -C src --jobs=1 check-security ${V:+V=1}
-    # Check that executables only contain allowed gcc, glibc and libstdc++
-    # version symbols for Linux distro back-compatibility.
+    # Check that executables only contain allowed version symbols.
     make -C src --jobs=1 check-symbols  ${V:+V=1}
 
-    mkdir -p ${OUTDIR}
+    mkdir -p "$OUTDIR"
+
     # Make the os-specific installers
     case "$HOST" in
         *mingw*)
@@ -428,3 +442,18 @@ mkdir -p "$DISTSRC"
             ;;
     esac
 )  # $DISTSRC
+
+rm -rf "$ACTUAL_OUTDIR"
+mv --no-target-directory "$OUTDIR" "$ACTUAL_OUTDIR" \
+    || ( rm -rf "$ACTUAL_OUTDIR" && exit 1 )
+
+(
+    cd /outdir-base
+    {
+        echo "$GIT_ARCHIVE"
+        find "$ACTUAL_OUTDIR" -type f
+    } | xargs realpath --relative-base="$PWD" \
+      | xargs sha256sum \
+      | sort -k2 \
+      | sponge "$ACTUAL_OUTDIR"/SHA256SUMS.part
+)

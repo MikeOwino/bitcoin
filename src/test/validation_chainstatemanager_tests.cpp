@@ -31,7 +31,6 @@ BOOST_AUTO_TEST_CASE(chainstatemanager)
     CTxMemPool& mempool = *m_node.mempool;
 
     std::vector<CChainState*> chainstates;
-    const CChainParams& chainparams = Params();
 
     BOOST_CHECK(!manager.SnapshotBlockhash().has_value());
 
@@ -76,9 +75,9 @@ BOOST_AUTO_TEST_CASE(chainstatemanager)
         /* cache_size_bytes */ 1 << 23, /* in_memory */ true, /* should_wipe */ false);
     WITH_LOCK(::cs_main, c2.InitCoinsCache(1 << 23));
     // Unlike c1, which doesn't have any blocks. Gets us different tip, height.
-    c2.LoadGenesisBlock(chainparams);
+    c2.LoadGenesisBlock();
     BlockValidationState _;
-    BOOST_CHECK(c2.ActivateBestChain(_, chainparams, nullptr));
+    BOOST_CHECK(c2.ActivateBestChain(_, nullptr));
 
     BOOST_CHECK(manager.IsSnapshotActive());
     BOOST_CHECK(!manager.IsSnapshotValidated());
@@ -138,7 +137,7 @@ BOOST_AUTO_TEST_CASE(chainstatemanager_rebalance_caches)
     {
         LOCK(::cs_main);
         c1.InitCoinsCache(1 << 23);
-        BOOST_REQUIRE(c1.LoadGenesisBlock(Params()));
+        BOOST_REQUIRE(c1.LoadGenesisBlock());
         c1.CoinsTip().SetBestBlock(InsecureRand256());
         manager.MaybeRebalanceCaches();
     }
@@ -156,7 +155,7 @@ BOOST_AUTO_TEST_CASE(chainstatemanager_rebalance_caches)
     {
         LOCK(::cs_main);
         c2.InitCoinsCache(1 << 23);
-        BOOST_REQUIRE(c2.LoadGenesisBlock(Params()));
+        BOOST_REQUIRE(c2.LoadGenesisBlock());
         c2.CoinsTip().SetBestBlock(InsecureRand256());
         manager.MaybeRebalanceCaches();
     }
@@ -226,13 +225,12 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_activate_snapshot, TestChain100Setup)
 
     // Snapshot should refuse to load at this height.
     BOOST_REQUIRE(!CreateAndActivateUTXOSnapshot(m_node, m_path_root));
-    BOOST_CHECK(chainman.ActiveChainstate().m_from_snapshot_blockhash.IsNull());
-    BOOST_CHECK_EQUAL(
-        chainman.ActiveChainstate().m_from_snapshot_blockhash,
-        chainman.SnapshotBlockhash().value_or(uint256()));
+    BOOST_CHECK(!chainman.ActiveChainstate().m_from_snapshot_blockhash);
+    BOOST_CHECK(!chainman.SnapshotBlockhash());
 
     // Mine 10 more blocks, putting at us height 110 where a valid assumeutxo value can
     // be found.
+    constexpr int snapshot_height = 110;
     mineBlocks(10);
     initial_size += 10;
     initial_total_coins += 10;
@@ -262,16 +260,26 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_activate_snapshot, TestChain100Setup)
     BOOST_REQUIRE(!CreateAndActivateUTXOSnapshot(
         m_node, m_path_root, [](CAutoFile& auto_infile, SnapshotMetadata& metadata) {
             // Wrong hash
+            metadata.m_base_blockhash = uint256::ZERO;
+    }));
+    BOOST_REQUIRE(!CreateAndActivateUTXOSnapshot(
+        m_node, m_path_root, [](CAutoFile& auto_infile, SnapshotMetadata& metadata) {
+            // Wrong hash
             metadata.m_base_blockhash = uint256::ONE;
     }));
 
     BOOST_REQUIRE(CreateAndActivateUTXOSnapshot(m_node, m_path_root));
 
     // Ensure our active chain is the snapshot chainstate.
-    BOOST_CHECK(!chainman.ActiveChainstate().m_from_snapshot_blockhash.IsNull());
+    BOOST_CHECK(!chainman.ActiveChainstate().m_from_snapshot_blockhash->IsNull());
     BOOST_CHECK_EQUAL(
-        chainman.ActiveChainstate().m_from_snapshot_blockhash,
+        *chainman.ActiveChainstate().m_from_snapshot_blockhash,
         *chainman.SnapshotBlockhash());
+
+    const AssumeutxoData& au_data = *ExpectedAssumeutxo(snapshot_height, ::Params());
+    const CBlockIndex* tip = chainman.ActiveTip();
+
+    BOOST_CHECK_EQUAL(tip->nChainTx, au_data.nChainTx);
 
     // To be checked against later when we try loading a subsequent snapshot.
     uint256 loaded_snapshot_blockhash{*chainman.SnapshotBlockhash()};
@@ -341,7 +349,7 @@ BOOST_FIXTURE_TEST_CASE(chainstatemanager_activate_snapshot, TestChain100Setup)
 
     // Snapshot blockhash should be unchanged.
     BOOST_CHECK_EQUAL(
-        chainman.ActiveChainstate().m_from_snapshot_blockhash,
+        *chainman.ActiveChainstate().m_from_snapshot_blockhash,
         loaded_snapshot_blockhash);
 }
 

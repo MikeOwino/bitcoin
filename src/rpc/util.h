@@ -72,18 +72,25 @@ void RPCTypeCheckObj(const UniValue& o,
  * Utilities: convert hex-encoded Values
  * (throws error if not hex).
  */
-extern uint256 ParseHashV(const UniValue& v, std::string strName);
-extern uint256 ParseHashO(const UniValue& o, std::string strKey);
-extern std::vector<unsigned char> ParseHexV(const UniValue& v, std::string strName);
-extern std::vector<unsigned char> ParseHexO(const UniValue& o, std::string strKey);
+uint256 ParseHashV(const UniValue& v, std::string strName);
+uint256 ParseHashO(const UniValue& o, std::string strKey);
+std::vector<unsigned char> ParseHexV(const UniValue& v, std::string strName);
+std::vector<unsigned char> ParseHexO(const UniValue& o, std::string strKey);
 
-extern CAmount AmountFromValue(const UniValue& value);
+/**
+ * Validate and return a CAmount from a UniValue number or string.
+ *
+ * @param[in] value     UniValue number or string to parse.
+ * @param[in] decimals  Number of significant digits (default: 8).
+ * @returns a CAmount if the various checks pass.
+ */
+CAmount AmountFromValue(const UniValue& value, int decimals = 8);
 
 using RPCArgList = std::vector<std::pair<std::string, UniValue>>;
-extern std::string HelpExampleCli(const std::string& methodname, const std::string& args);
-extern std::string HelpExampleCliNamed(const std::string& methodname, const RPCArgList& args);
-extern std::string HelpExampleRpc(const std::string& methodname, const std::string& args);
-extern std::string HelpExampleRpcNamed(const std::string& methodname, const RPCArgList& args);
+std::string HelpExampleCli(const std::string& methodname, const std::string& args);
+std::string HelpExampleCliNamed(const std::string& methodname, const RPCArgList& args);
+std::string HelpExampleRpc(const std::string& methodname, const std::string& args);
+std::string HelpExampleRpcNamed(const std::string& methodname, const RPCArgList& args);
 
 CPubKey HexToPubKey(const std::string& hex_in);
 CPubKey AddrToPubKey(const FillableSigningProvider& keystore, const std::string& addr_in);
@@ -145,7 +152,9 @@ struct RPCArg {
          */
         OMITTED,
     };
-    using Fallback = std::variant<Optional, /* default value for optional args */ std::string>;
+    using DefaultHint = std::string;
+    using Default = UniValue;
+    using Fallback = std::variant<Optional, /* hint for default value */ DefaultHint, /* default constant value */ Default>;
     const std::string m_names; //!< The name of the arg (can be empty for inner args, can contain multiple aliases separated by | for named request arguments)
     const Type m_type;
     const bool m_hidden;
@@ -171,7 +180,7 @@ struct RPCArg {
           m_oneline_description{std::move(oneline_description)},
           m_type_str{std::move(type_str)}
     {
-        CHECK_NONFATAL(type != Type::ARR && type != Type::OBJ);
+        CHECK_NONFATAL(type != Type::ARR && type != Type::OBJ && type != Type::OBJ_USER_KEYS);
     }
 
     RPCArg(
@@ -191,7 +200,7 @@ struct RPCArg {
           m_oneline_description{std::move(oneline_description)},
           m_type_str{std::move(type_str)}
     {
-        CHECK_NONFATAL(type == Type::ARR || type == Type::OBJ);
+        CHECK_NONFATAL(type == Type::ARR || type == Type::OBJ || type == Type::OBJ_USER_KEYS);
     }
 
     bool IsOptional() const;

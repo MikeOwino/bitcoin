@@ -58,7 +58,19 @@ void initialize_process_message()
 
     static const auto testing_setup = MakeNoLogFileContext<const TestingSetup>();
     g_setup = testing_setup.get();
+
+    // Temporary debug for https://bugs.chromium.org/p/oss-fuzz/issues/detail?id=35027
+    {
+        LOCK(::cs_main);
+        assert(CheckDiskSpace(gArgs.GetDataDirNet()));
+        assert(CheckDiskSpace(gArgs.GetDataDirNet(), 48 * 2 * 2 * g_setup->m_node.chainman->ActiveChainstate().CoinsTip().GetCacheSize()));
+    }
     for (int i = 0; i < 2 * COINBASE_MATURITY; i++) {
+        {
+            LOCK(::cs_main);
+            assert(CheckDiskSpace(gArgs.GetDataDirNet()));
+            assert(CheckDiskSpace(gArgs.GetDataDirNet(), 48 * 2 * 2 * g_setup->m_node.chainman->ActiveChainstate().CoinsTip().GetCacheSize()));
+        }
         MineBlock(g_setup->m_node, CScript() << OP_TRUE);
     }
     SyncWithValidationInterfaceQueue();
@@ -100,7 +112,6 @@ void fuzz_target(FuzzBufferType buffer, const std::string& LIMIT_TO_MESSAGE_TYPE
         g_setup->m_node.peerman->SendMessages(&p2p_node);
     }
     SyncWithValidationInterfaceQueue();
-    LOCK2(::cs_main, g_cs_orphans); // See init.cpp for rationale for implicit locking order requirement
     g_setup->m_node.connman->StopNodes();
 }
 

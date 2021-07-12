@@ -3,10 +3,15 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <chainparams.h>
-#include <wallet/external_signer.h>
+#include <external_signer.h>
 #include <wallet/external_signer_scriptpubkeyman.h>
 
-#ifdef ENABLE_EXTERNAL_SIGNER
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
 
 bool ExternalSignerScriptPubKeyMan::SetupDescriptor(std::unique_ptr<Descriptor> desc)
 {
@@ -55,10 +60,10 @@ bool ExternalSignerScriptPubKeyMan::DisplayAddress(const CScript scriptPubKey, c
 }
 
 // If sign is true, transaction must previously have been filled
-TransactionError ExternalSignerScriptPubKeyMan::FillPSBT(PartiallySignedTransaction& psbt, int sighash_type, bool sign, bool bip32derivs, int* n_signed) const
+TransactionError ExternalSignerScriptPubKeyMan::FillPSBT(PartiallySignedTransaction& psbt, const PrecomputedTransactionData& txdata, int sighash_type, bool sign, bool bip32derivs, int* n_signed) const
 {
     if (!sign) {
-        return DescriptorScriptPubKeyMan::FillPSBT(psbt, sighash_type, false, bip32derivs, n_signed);
+        return DescriptorScriptPubKeyMan::FillPSBT(psbt, txdata, sighash_type, false, bip32derivs, n_signed);
     }
 
     // Already complete if every input is now signed
@@ -77,5 +82,3 @@ TransactionError ExternalSignerScriptPubKeyMan::FillPSBT(PartiallySignedTransact
     FinalizePSBT(psbt); // This won't work in a multisig setup
     return TransactionError::OK;
 }
-
-#endif
